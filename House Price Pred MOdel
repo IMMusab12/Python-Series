@@ -1,0 +1,67 @@
+import pandas as pd
+import numpy as np
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_squared_error
+
+df = pd.read_excel('/mnt/data/housing_data.xlsx')
+
+target = 'price'
+
+X = df.drop(columns=[target])
+y = df[target]
+
+num_cols = X.select_dtypes(include=['int64', 'float64']).columns
+cat_cols = X.select_dtypes(include=['object']).columns
+
+for col in num_cols:
+    X[col].fillna(X[col].mean(), inplace=True)
+
+for col in cat_cols:
+    X[col].fillna(X[col].mode()[0], inplace=True)
+
+num_transformer = StandardScaler()
+cat_transformer = OneHotEncoder(handle_unknown='ignore')
+
+preprocessor = ColumnTransformer([
+    ('num', num_transformer, num_cols),
+    ('cat', cat_transformer, cat_cols)
+])
+
+pipeline = Pipeline([
+    ('preprocessing', preprocessor),
+    ('model', LinearRegression())
+])
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+pipeline.fit(X_train, y_train)
+
+y_pred = pipeline.predict(X_test)
+
+r2 = r2_score(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+
+print(r2)
+print(mse)
+
+ohe_features = pipeline.named_steps['preprocessing'] \
+    .named_transformers_['cat'] \
+    .get_feature_names_out(cat_cols)
+
+all_features = np.concatenate([num_cols, ohe_features])
+
+coefficients = pipeline.named_steps['model'].coef_
+
+importance_df = pd.DataFrame({
+    'Feature': all_features,
+    'Importance': coefficients
+}).sort_values(by='Importance', key=abs, ascending=False)
+
+print(importance_df.head(10))
