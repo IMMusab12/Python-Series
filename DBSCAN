@@ -1,0 +1,249 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+from sklearn.cluster import DBSCAN
+from sklearn.metrics import silhouette_score
+from sklearn.decomposition import PCA
+
+cd = pd.read_csv("Country-data.csv")
+
+print("Dataset Shape:", cd.shape)
+print(cd.head())
+print(cd.info())
+
+print(cd.isnull().sum())
+print("Duplicate Records:", cd.duplicated().sum())
+
+cd = cd.drop_duplicates()
+
+country_names = cd["country"]
+
+features = cd.drop("country", axis=1)
+
+features.hist(figsize=(15,10))
+plt.tight_layout()
+plt.show()
+
+for column in features.columns:
+    plt.figure(figsize=(6,3))
+    sns.boxplot(x=features[column])
+    plt.title(column)
+    plt.show()
+
+plt.figure(figsize=(10,8))
+sns.heatmap(features.corr(), annot=True, cmap="coolwarm", fmt=".2f")
+plt.show()
+
+print(features.skew())
+
+for column in ["income", "gdpp", "child_mort"]:
+    if column in features.columns:
+        features[column] = np.log1p(features[column])
+
+scaler = StandardScaler()
+scaled_features = scaler.fit_transform(features)
+
+minimum_samples = 5
+
+nearest_neighbors = NearestNeighbors(
+    n_neighbors=minimum_samples
+)
+
+nearest_neighbors.fit(scaled_features)
+
+distances, indices = nearest_neighbors.kneighbors(
+    scaled_features
+)
+
+sorted_distances = np.sort(
+    distances[:, minimum_samples - 1]
+)
+
+plt.figure(figsize=(8,5))
+plt.plot(sorted_distances)
+plt.xlabel("Data Points")
+plt.ylabel("Distance")
+plt.title("K-Distance Graph")
+plt.show()
+
+tuning_results = []
+
+epsilon_values = [0.5, 0.7, 0.9]
+min_sample_values = [4, 5, 8]
+
+for epsilon in epsilon_values:
+
+    for minimum_samples in min_sample_values:
+
+        dbscan_model = DBSCAN(
+            eps=epsilon,
+            min_samples=minimum_samples
+        )
+
+        cluster_labels = dbscan_model.fit_predict(
+            scaled_features
+        )
+
+        total_clusters = len(set(cluster_labels))
+
+        if -1 in cluster_labels:
+            total_clusters -= 1
+
+        total_noise_points = list(cluster_labels).count(-1)
+
+        if total_clusters > 1:
+
+            valid_points = cluster_labels != -1
+
+            silhouette_value = silhouette_score(
+                scaled_features[valid_points],
+                cluster_labels[valid_points]
+            )
+
+        else:
+            silhouette_value = np.nan
+
+        tuning_results.append([
+            epsilon,
+            minimum_samples,
+            total_clusters,
+            total_noise_points,
+            silhouette_value
+        ])
+
+tuning_results = pd.DataFrame(
+    tuning_results,
+    columns=[
+        "eps",
+        "min_samples",
+        "clusters",
+        "noise_points",
+        "silhouette_score"
+    ]
+)
+
+print(tuning_results)
+
+best_eps = 0.7
+best_min_samples = 5
+
+dbscan_model = DBSCAN(
+    eps=best_eps,
+    min_samples=best_min_samples
+)
+
+cluster_labels = dbscan_model.fit_predict(
+    scaled_features
+)
+
+cd["Cluster"] = cluster_labels
+
+total_clusters = len(set(cluster_labels))
+
+if -1 in cluster_labels:
+    total_clusters -= 1
+
+total_noise_points = list(cluster_labels).count(-1)
+
+print("Total Clusters Found:", total_clusters)
+print("Total Noise Points:", total_noise_points)
+
+for cluster_number in sorted(cd["Cluster"].unique()):
+
+    print(f"\nCluster {cluster_number}")
+
+    cluster_countries = cd[
+        cd["Cluster"] == cluster_number
+    ]["country"].tolist()
+
+    print(cluster_countries)
+
+noise_countries = cd[
+    cd["Cluster"] == -1
+]["country"]
+
+print("Noise Countries:")
+print(noise_countries.tolist())
+
+valid_points = cluster_labels != -1
+
+if len(set(cluster_labels[valid_points])) > 1:
+
+    final_silhouette_score = silhouette_score(
+        scaled_features[valid_points],
+        cluster_labels[valid_points]
+    )
+
+    print(
+        "Final Silhouette Score:",
+        round(final_silhouette_score, 4)
+    )
+
+pca_model = PCA(n_components=2)
+
+pca_components = pca_model.fit_transform(
+    scaled_features
+)
+
+pca_results = pd.DataFrame(
+    pca_components,
+    columns=["PC1", "PC2"]
+)
+
+pca_results["Cluster"] = cluster_labels
+
+plt.figure(figsize=(10,7))
+
+sns.scatterplot(
+    data=pca_results,
+    x="PC1",
+    y="PC2",
+    hue="Cluster",
+    palette="tab10",
+    s=100
+)
+
+noise_points = pca_results[
+    pca_results["Cluster"] == -1
+]
+
+plt.scatter(
+    noise_points["PC1"],
+    noise_points["PC2"],
+    color="black",
+    marker="x",
+    s=150
+)
+
+plt.show()
+
+cluster_summary = cd.groupby(
+    "Cluster"
+).mean(numeric_only=True)
+
+print(cluster_summary)
+
+cluster_summary["gdpp"].plot(
+    kind="bar",
+    figsize=(8,5)
+)
+
+plt.show()
+
+cluster_summary["child_mort"].plot(
+    kind="bar",
+    figsize=(8,5)
+)
+
+plt.show()
+
+cd.to_csv(
+    "DBSCAN_Country_Clusters.csv",
+    index=False
+)
+
+print("Clustered dataset saved successfully.")
